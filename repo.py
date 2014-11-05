@@ -67,7 +67,7 @@ class NdnHierarchicalRepo(object):
         formatter = logging.Formatter(
                 '%(asctime)-15s %(funcName)s\n\t %(message)s')
         s.setFormatter(formatter)
-        s.setLevel(logging.WARNING)
+        s.setLevel(logging.INFO)
         self.log.addHandler(s)
 
     def initializeDatabase(self):
@@ -153,7 +153,28 @@ class NdnHierarchicalRepo(object):
 
     def handleDataInterests(self, prefix, interest, transport, prefixId):
         # TODO: verification
-        pass
+        # TODO: bulk data return?
+        
+        # we match the components to the name, and any '_' components
+        # are discarded. Then we run a MongoDB query and append the
+        # object id to allow for excludes
+        interestName = interest.getName()
+        responseName = Name(interestName)
+        nameFields = self.matchNameToSchema(interestName)
+        nameFields = {k:v for (k,v) in nameFields.items() 
+                        if v != '_'}
+        self.log.info("Data requested with params:\n\t{}".format(nameFields))
+        result = self.db['data'].find_one(nameFields)
+        try:
+            dataId = result[u'_id']
+            self.log.info("Found object {}".format(dataId))
+            responseName.append(str(dataId))
+        except TypeError:
+            pass
+        responseData = Data(responseName)
+        responseData.setContent(str(result))
+        transport.send(responseData.wireEncode().buf())
+
 
     def _onInsertionDataReceived(self, interest, data):
         # TODO: update status in processingList
@@ -200,9 +221,6 @@ class NdnHierarchicalRepo(object):
             self._insertFace.expressInterest(dataName, 
                     self._onInsertionDataReceived,
                     self._onInstertionDataTimeout)
-            
-        
-
 
 if __name__ == '__main__':
     logging.getLogger('trollius').addHandler(logging.StreamHandler())

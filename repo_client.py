@@ -30,29 +30,21 @@ gotResponse = False
 
 def onDataReceived(interest, data):
     global gotResponse
-    responseMessage = RepoCommandResponseMessage()
-    ProtobufTlv.decode(responseMessage, data.getContent())
-    print 'Status code: {}'.format(responseMessage.response.status_code)
     gotResponse = True
+    print data.getName()
+    print '-------'
+    print data.getContent()
+    print '-------'
 
 def onTimeout(interest):
     global gotResponse
-    print "Timed out on {}".format(interest.toUri())
     gotResponse = True
+    print "Timed out on {}".format(interest.toUri())
 
-def makeRepoInsertCommand():
+def makeDataRequestCommand():
     dataName = Name(assembleDataName())
     print dataName
-    commandMessage = RepoCommandParameterMessage()
-    command = commandMessage.command
-    for component in dataName:
-        command.name.components.append(str(component.getValue()))
-    command.start_block_id = command.end_block_id = 0
-    commandComponent = ProtobufTlv.encode(commandMessage)
-
-    interestName = Name(repoPrefix).append('insert')
-    interestName.append(commandComponent)
-    interest = Interest(interestName)
+    interest = Interest(dataName)
     interest.setInterestLifetimeMilliseconds(4000)
     return interest
 
@@ -61,7 +53,8 @@ def assembleDataName():
     keyNames = ['building', 'room', 'panel_name', 'quantity', 'data_type']
     valueDict = {}
     for k in keyNames:
-        valueDict[k] = raw_input('{}: '.format(k))
+        value  = raw_input('{}: '.format(k)).strip()
+        valueDict[k] = value if len(value)>0 else '_'
     dataName = schemaStr.format(**valueDict)
     return dataName
 
@@ -73,8 +66,8 @@ def main():
     f.setCommandSigningInfo(k, k.getDefaultCertificateName())
     while True:
         try:
-            i = makeRepoInsertCommand()
-            f.makeCommandInterest(i)
+            i = makeDataRequestCommand()
+            #f.makeCommandInterest(i)
             gotResponse = False
             f.expressInterest(i, onDataReceived, onTimeout)
             while not gotResponse:
