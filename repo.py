@@ -35,6 +35,7 @@ from pyndn import Name, Data, Interest, ThreadsafeFace
 from pyndn.security import KeyChain
 from pyndn.encoding import ProtobufTlv
 from bson.binary import Binary
+from bson import BSON
 import trollius as asyncio
 import logging
 import struct
@@ -213,7 +214,7 @@ class NdnHierarchicalRepo(object):
         dataFields.update({'value':dataValue, 'ts':tsConverted})
         dataFields = useSchema.sanitizeData(dataFields)
         dataCollection = self.db['data']
-        new_id = dataCollection.insert(dataFields)
+        new_id = dataCollection.update(dataFields, dataFields, upsert=True)
         self.log.debug('Inserted object {}'.format(new_id))
 
     def start(self):
@@ -257,7 +258,8 @@ class NdnHierarchicalRepo(object):
         except TypeError:
             pass
         responseData = Data(responseName)
-        responseData.setContent(str(result))
+        resultEncoded = BSON.encode(result)
+        responseData.setContent(resultEncoded)
         transport.send(responseData.wireEncode().buf())
 
 

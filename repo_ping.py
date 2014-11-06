@@ -19,71 +19,116 @@
 # A copy of the GNU General Public License is in the file COPYING.
 
 
-from pyndn import Name, Face, Data, Interest
+from pyndn import Name, ThreadsafeFace, Data, Interest
 from pyndn.encoding import ProtobufTlv
 from repo_command_pb2 import RepoCommandParameterMessage
 from repo_response_pb2 import RepoCommandResponseMessage
 from pyndn.security import KeyChain
-from collections import defaultdict
-repoPrefix = Name('/test/repo')
-gotResponse = False
+import trollius as asyncio
+from trollius import From
+import logging
+class NdnRepoPing(object):
+    """
+     A repo is supposed to be notified of new data by the publisher. Since the 
+     publisher doesn't know about this repo, I will 'manually' poke the repo to      insert data points.
+    """
+    def __init__(self, repoPrefix=None):
+        super(NdnRepoPing, self).__init__()
+        if repoPrefix is not None:
+            self.repoPrefix = repoPrefix
+        else:
+            self.repoPrefix = Name('/test/repo')
+        self.repoWatchNames = []
+        self.log = logging.getLogger(str(self.__class__))
+        h = logging.FileHandler('repo_ping.log')
+        h.setFormatter(logging.Formatter(
+            '%(asctime)-15s %(levelname)-8s %(funcName)s\n\t%(message)s'))
+        self.log.addHandler(h)
+        self.log.setLevel(logging.DEBUG)
+        self.isStopped = True
+        logging.getLogger('trollius').addHandler(h)
 
-def onDataReceived(interest, data):
-    global gotResponse
-    responseMessage = RepoCommandResponseMessage()
-    ProtobufTlv.decode(responseMessage, data.getContent())
-    print 'Status code: {}'.format(responseMessage.response.status_code)
-    gotResponse = True
+    def onDataReceived(self, interest, data):
+        self.log.debug('Response to {}'.format(interest.getName()))
+        responseMessage = RepoCommandResponseMessage()
+        ProtobufTlv.decode(responseMessage, data.getContent())
+        self.log.debug('Status code: {}'.format(
+            responseMessage.response.status_code))
 
-def onTimeout(interest):
-    global gotResponse
-    print "Timed out on {}".format(interest.toUri())
-    gotResponse = True
+    def onTimeout(self, interest):
+        self.log.info('Timed out on {}'.format(interest.getName()))
 
-def makeRepoInsertCommand():
-    dataName = Name(assembleDataName())
-    print dataName
-    commandMessage = RepoCommandParameterMessage()
-    command = commandMessage.command
-    for component in dataName:
-        command.name.components.append(str(component.getValue()))
-    command.start_block_id = command.end_block_id = 0
-    commandComponent = ProtobufTlv.encode(commandMessage)
+    def sendRepoInsertCommand(self, dataName):
+        self.log.debug('Sending insert command for {}'.format(dataName))
+        commandMessage = RepoCommandParameterMessage()
+        command = commandMessage.command
+        for component in dataName:
+            command.name.components.append(str(component.getValue()))
+        command.start_block_id = command.end_block_id = 0
+        commandComponent = ProtobufTlv.encode(commandMessage)
 
-    interestName = Name(repoPrefix).append('insert')
-    interestName.append(commandComponent)
-    interest = Interest(interestName)
-    interest.setInterestLifetimeMilliseconds(4000)
-    return interest
+        interestName = Name(self.repoPrefix).append('insert')
+        interestName.append(commandComponent)
+        interest = Interest(interestName)
+        interest.setInterestLifetimeMilliseconds(4000)
+        self.face.makeCommandInterest(interest)
+        
+        self.face.expressInterest(interest, self.onDataReceived, self.onTimeout)
 
-def assembleDataName():
-    schemaStr = ('/ndn/ucla.edu/bms/{building}/data/{room}/electrical/panel/{panel_name}/{quantity}/{data_type}')
-    keyNames = ['building', 'room', 'panel_name', 'quantity', 'data_type']
-    valueDict = {}
-    for k in keyNames:
-        valueDict[k] = raw_input('{}: '.format(k))
-    dataName = schemaStr.format(**valueDict)
-    return dataName
+    @asyncio.coroutine
+    def sendNextInsertRequest(self):
+        while True:
+            for name in self.repoWatchNames:
+                self.sendRepoInsertCommand(name)
+            yield From(asyncio.sleep(10))
 
+    def start(self):
+        self.isStopped = False
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.face = ThreadsafeFace(self.loop, '')
+        k = KeyChain()
+        self.face.setCommandSigningInfo(k, k.getDefaultCertificateName())
+        self.face.stopWhen(lambda:self.isStopped)
+        try:
+            self.loop.run_until_complete(self.sendNextInsertRequest())
+        finally:
+            self.face.shutdown()
+
+    def stop(self):
+        self.isStopped = True
+
+    def addWatchName(self, newName):
+        if newName not in self.repoWatchNames:
+            self.repoWatchNames.append(Name(newName))
 
 def main():
-    global gotResponse
-    f = Face()
-    k = KeyChain()
-    f.setCommandSigningInfo(k, k.getDefaultCertificateName())
-    while True:
-        try:
-            i = makeRepoInsertCommand()
-            f.makeCommandInterest(i)
-            gotResponse = False
-            f.expressInterest(i, onDataReceived, onTimeout)
-            while not gotResponse:
-                f.processEvents()
-            print
-        except (EOFError, KeyboardInterrupt):
-            break
-        except Exception as e:
-            print e
+    import threading
+    p = NdnRepoPing()
+
+    pingThread = threading.Thread(target=p.start)
+    pingThread.daemon = True
+
+    def assembleDataName():
+        schemaStr = ('/ndn/ucla.edu/bms/{building}/data/{room}/electrical/panel/{panel_name}/{quantity}/{data_type}')
+        keyNames = ['building', 'room', 'panel_name', 'quantity', 'data_type']
+        valueDict = {}
+        for k in keyNames:
+            valueDict[k] = raw_input('{}: '.format(k))
+        dataName = schemaStr.format(**valueDict)
+        return dataName
+
+    try:
+        pingThread.start()
+        while True:
+            print 'Insert repo watch name'
+            newName = assembleDataName()
+            print 'Adding {} to watchlist'.format(newName)
+            p.loop.call_soon_threadsafe(p.addWatchName, newName)
+    except (KeyboardInterrupt):
+        pass
+    except Exception as e:
+        print e
 
 if __name__ == '__main__':
     main()

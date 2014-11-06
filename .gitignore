@@ -2,3 +2,5 @@
 *.pyo
 *.swp
 *.swo
+*_pb2.py
+*.log

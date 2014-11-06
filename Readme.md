@@ -7,7 +7,7 @@ Implements the repo-ng protocol, but stores data in MongoDB, and requires name-b
 
 An example schema may look like:
 
-    /ndn/edu/ucla/\<username\>/documents/\<document_name\>
+    /ndn/edu/ucla/<username>/documents/<document_name>
 
 The components enclosed in \<\> are treated as keys into the data store, so a query may be made to find all document names for a user, or all usernames who have a specific document, etc.
 
