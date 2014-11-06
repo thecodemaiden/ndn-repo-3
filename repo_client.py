@@ -43,7 +43,6 @@ def onTimeout(interest):
 
 def makeDataRequestCommand():
     dataName = Name(assembleDataName())
-    print dataName
     interest = Interest(dataName)
     interest.setInterestLifetimeMilliseconds(4000)
     return interest
