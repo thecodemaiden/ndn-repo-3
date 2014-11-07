@@ -250,15 +250,17 @@ class NdnHierarchicalRepo(object):
         responseName = Name(interestName)
         nameFields = chosenSchema.matchNameToSchema(interestName)
         self.log.info("Data requested with params:\n\t{}".format(nameFields))
-        result = self.db['data'].find_one(nameFields)
-        try:
+        allResults = []
+        
+        for result in self.db['data'].find(nameFields):
             dataId = result[u'_id']
-            self.log.info("Found object {}".format(dataId))
-            responseName.append(str(dataId))
-        except TypeError:
-            pass
+            self.log.debug("Found object {}".format(dataId))
+            allResults.append(result)
+
+        #responseName.append(str(dataId))
+        responseObject = {'count':len(allResults), 'results':allResults}
         responseData = Data(responseName)
-        resultEncoded = BSON.encode(result)
+        resultEncoded = BSON.encode(responseObject)
         responseData.setContent(resultEncoded)
         transport.send(responseData.wireEncode().buf())
 

@@ -30,8 +30,11 @@ from Crypto.PublicKey import RSA
 from Crypto.Hash import SHA256
 
 import trollius as asyncio
+from trollius import From
 import logging
 from bson import Binary, BSON
+import json
+import string
 
 class NdnRepoClient(object):
     def __init__(self, repoPrefix=None):
@@ -42,12 +45,19 @@ class NdnRepoClient(object):
             self.repoPrefix = Name('/test/repo')
         self.loadKey()
         self.isStopped = False
+        self.dataReady = asyncio.Event()
+        self.resultQueue = asyncio.Queue()
 
         self.log = logging.getLogger(str(self.__class__))
         h = logging.FileHandler('repo_client.log')
-        h.setFormatter(logging.Formatter(
-            '%(asctime)-15s %(levelname)-8s %(funcName)s\n\t%(message)s'))
+        s = logging.StreamHandler()
+        logFormatter = logging.Formatter(
+            '%(asctime)-15s %(levelname)-8s %(funcName)s\n\t%(message)s')
+        s.setFormatter(logFormatter)
+        h.setFormatter(logFormatter)
         self.log.addHandler(h)
+        self.log.addHandler(s)
+        s.setLevel(logging.WARN)
         self.log.setLevel(logging.DEBUG)
         self.isStopped = True
         logging.getLogger('trollius').addHandler(h)
@@ -58,44 +68,73 @@ class NdnRepoClient(object):
             binDer = keyFile.read()
             self.privateKey = RSA.importKey(binDer)
 
+
+
+    def _decryptAndPrintRecord(self, recordData, keyName, parentDoc):
+
+        def cleanString(dirty):
+            return ''.join(filter(string.printable.__contains__, str(dirty)))
+
+        def onKeyDataReceived(keyInterest, keyData):
+            self.log.debug('Got key for {}'.format(keyInterest.getName()))
+            cipherText = str(keyData.getContent())
+            symKeyRaw = self.privateKey.decrypt(cipherText)
+            symKey = symKeyRaw[-64:].decode('hex')
+
+            msg = recordData[8:]
+            iv = msg[:16]
+            cipherText = msg[16:]
+
+            cipher = AES.new(key=symKey, IV=iv, mode=AES.MODE_CBC)
+            decData = cleanString(cipher.decrypt(cipherText))
+
+            fromJson = json.loads(decData)
+            fromJson.update(parentDoc)
+
+            #self.resultQueue.put_nowait(fromJson)
+            print '---------'
+            print str(fromJson)
+
+        def onKeyTimeout(keyInterest):
+            self.log.error('Could not get decryption key for {}'.format(data.getName()))
+            #self.resultQueue.put_nowait({})
+
+        i = Interest(keyName)
+        i.setMustBeFresh(False)
+        i.setInterestLifetimeMilliseconds(2000)
+        self.keyFace.expressInterest(i, onKeyDataReceived, onKeyTimeout)
+
+    @asyncio.coroutine
+    def collectResults(self, allData):
+        self.dataReady.set()
+        for record in allData:
+            parentDoc = {k:v for (k,v) in record.items() if k not in [u'_id', u'value']} 
+            aDataVal = str(record[u'value'])
+            keyTs = aDataVal[:8]
+            keyDataName = Name('/ndn/ucla.edu/bms/melnitz/kds').append(keyTs).append(self.keyId)
+            self._decryptAndPrintRecord(aDataVal, keyDataName, parentDoc)
+        receivedVals = []
+        #for i in range(len(allData)):
+        #v = yield From(self.resultQueue.get())
+        #receivedVals.append(v)
+        print receivedVals
+
     def onDataReceived(self, interest, data):
         # now we have to retrieve the key
         dataContent = str(data.getContent())
         dataContent = BSON(dataContent)
         dataDict = dataContent.decode()
-        dataVal = str(dataDict[u'value'])
-        keyTs = dataVal[:8]
-        keyDataName = Name('/ndn/ucla.edu/bms/melnitz/kds').append(keyTs).append(self.keyId)
-        i = Interest(keyDataName)
-        i.setMustBeFresh(False)
-        i.setInterestLifetimeMilliseconds(2000)
 
-        def onKeyDataReceived(keyInterest, keyData):
-            print 'Got key for {}'.format(keyInterest.getName())
-            cipherText = str(keyData.getContent())
-            symKeyRaw = self.privateKey.decrypt(cipherText)
-            symKey = symKeyRaw[-64:].decode('hex')
+        dataCount = dataDict['count']
+        print '---------'
+        print 'Got {} result(s)'.format(dataCount)
 
-            msg = dataVal[8:]
-            iv = msg[:16]
-            cipherText = msg[16:]
-
-            cipher = AES.new(key=symKey, IV=iv, mode=AES.MODE_CBC)
-            decData = cipher.decrypt(cipherText)
-
-            print '---------'
-            print data.getName()
-            print '---------'
-            print decData
-            print '--------\n'
-
-        def onKeyTimeout(keyInterest):
-            print 'Could not get decryption key for {}'.format(data.getName())
-
-        self.keyFace.expressInterest(i, onKeyDataReceived, onKeyTimeout)
+        allData = dataDict['results']
+        asyncio.async(self.collectResults(allData))
 
     def onDataTimeout(self, interest):
-        print "Timed out on {}".format(interest.toUri())
+        self.log.warn("Timed out on {}".format(interest.toUri()))
+        self.dataReady.set()
 
     def sendDataRequestCommand(self, dataName):
         interest = Interest(dataName)
@@ -128,6 +167,7 @@ def main():
     import threading
     import time
 
+    client = NdnRepoClient()
     def assembleDataName():
         schemaStr = ('/ndn/ucla.edu/bms/{building}/data/{room}/electrical/panel/{panel_name}/{quantity}/{data_type}')
         keyNames = ['building', 'room', 'panel_name', 'quantity', 'data_type']
@@ -138,24 +178,26 @@ def main():
         dataName = schemaStr.format(**valueDict)
         return Name(dataName)
 
-    l = logging.getLogger('trollius')
-    l.addHandler(logging.StreamHandler())
-    client = NdnRepoClient()
-    clientThread = threading.Thread(target=client.start)
-    clientThread.daemon = True
-    try:
-        clientThread.start()
+    @asyncio.coroutine
+    def parseDataRequest():
         while True:
+            client.dataReady.clear()
             dataName = assembleDataName()
             client.loop.call_soon_threadsafe(client.sendDataRequestCommand,
                     dataName)
-            time.sleep(4)
+            yield From(client.dataReady.wait())
+
+    clientThread = threading.Thread(target=client.start)
+    clientThread.daemon = True
+    clientThread.start()
+    
+    try:
+        asyncio.get_event_loop().run_until_complete(parseDataRequest())
     except (EOFError, KeyboardInterrupt):
         pass
     except Exception as e:
         print e
     finally:
-        client.stop()
         client.stop()
 
 
