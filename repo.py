@@ -143,7 +143,7 @@ class NdnSchema(object):
                     except ValueError:
                         # raise struct.error if this doesn't work
                         timeVal = struct.unpack("!Q", dataDict[k])[0]
-                    outputDict[k] = datetime.utcfromtimestamp(timeVal)
+                    outputDict[k] = datetime.fromtimestamp(timeVal)
                 else:
                     raise ValueError('Bad schema type: {}'.format(fieldType))
                     
@@ -306,12 +306,15 @@ class NdnHierarchicalRepo(object):
 
         # now send the interest out to the publisher
         # TODO: pendingProcesses becomes list of all processes as objects
+        i = Interest(dataName)
+        i.setChildSelector(1)
+        i.setInterestLifetimeMilliseconds(4000)
         try:
             self.pendingProcesses[processId] = (dataName, 100)
         except NameError:
             pass # wasn't valid insert request
         else:
-            self._insertFace.expressInterest(dataName, 
+            self._insertFace.expressInterest(i, 
                     self._onInsertionDataReceived,
                     self._onInsertionDataTimeout)
 

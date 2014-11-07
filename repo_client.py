@@ -1,4 +1,3 @@
-#!/usr/bin/python
 # -*- Mode:python; c-file-style:"gnu"; indent-tabs-mode:nil -*- */
 #
 # Copyright (C) 2014 Regents of the University of California.
@@ -35,6 +34,7 @@ import logging
 from bson import Binary, BSON
 import json
 import string
+import datetime
 
 class NdnRepoClient(object):
     def __init__(self, repoPrefix=None):
@@ -91,33 +91,66 @@ class NdnRepoClient(object):
             fromJson = json.loads(decData)
             fromJson.update(parentDoc)
 
-            #self.resultQueue.put_nowait(fromJson)
-            print '---------'
-            print str(fromJson)
+            self.resultQueue.put_nowait(fromJson)
 
         def onKeyTimeout(keyInterest):
             self.log.error('Could not get decryption key for {}'.format(data.getName()))
-            #self.resultQueue.put_nowait({})
+            self.resultQueue.put_nowait({})
 
         i = Interest(keyName)
         i.setMustBeFresh(False)
         i.setInterestLifetimeMilliseconds(2000)
         self.keyFace.expressInterest(i, onKeyDataReceived, onKeyTimeout)
 
+    def prettifyResults(self, resultsList):
+        # dictionary comparison is by length (# of k:v pairs)
+        allKeys = max(resultsList).keys()
+        columnWidths = {}
+        for k in allKeys:
+            if k == 'ts':
+                columnWidths[k] = len(max([(result[k]).isoformat() for result in resultsList 
+                    if k in result]))
+            else:
+                columnWidths[k] = len(max([str(result[k]) for result in resultsList 
+                    if k in result]))
+            columnWidths[k] = max(columnWidths[k], len(k)+2)
+        headerLen = sum(columnWidths.values())+len(k)
+        print '-'*headerLen
+        headers = []
+        for k in allKeys:
+            headers.append('{0:^{1}}'.format(k, columnWidths[k]))
+        print '|'+'|'.join(headers)+'|'
+        print '-'*headerLen
+        for result in resultsList:
+            line = []
+            for k in allKeys:
+                if k not in result:
+                    val = ''
+                elif k == 'ts':
+                    val = result[k].isoformat()
+                else:
+                    val = result[k]
+                line.append('{0:^{1}}'.format(val, columnWidths[k]))
+            print '|'+'|'.join(line)+'|'
+        print '-'*headerLen
+
     @asyncio.coroutine
     def collectResults(self, allData):
-        self.dataReady.set()
-        for record in allData:
-            parentDoc = {k:v for (k,v) in record.items() if k not in [u'_id', u'value']} 
-            aDataVal = str(record[u'value'])
-            keyTs = aDataVal[:8]
-            keyDataName = Name('/ndn/ucla.edu/bms/melnitz/kds').append(keyTs).append(self.keyId)
-            self._decryptAndPrintRecord(aDataVal, keyDataName, parentDoc)
-        receivedVals = []
-        #for i in range(len(allData)):
-        #v = yield From(self.resultQueue.get())
-        #receivedVals.append(v)
-        print receivedVals
+        try:
+            for record in allData:
+                parentDoc = {k:v for (k,v) in record.items() if k not in [u'_id', u'value']} 
+                aDataVal = str(record[u'value'])
+                keyTs = aDataVal[:8]
+                keyDataName = Name('/ndn/ucla.edu/bms/melnitz/kds').append(keyTs).append(self.keyId)
+                self._decryptAndPrintRecord(aDataVal, keyDataName, parentDoc)
+            receivedVals = []
+            for i in range(len(allData)):
+                v = yield From(self.resultQueue.get())
+                receivedVals.append(v)
+            self.prettifyResults(receivedVals)
+            print
+        finally:
+            self.dataReady.set()
 
     def onDataReceived(self, interest, data):
         # now we have to retrieve the key
@@ -145,30 +178,7 @@ class NdnRepoClient(object):
     def stop(self):
         self.isStopped = True
 
-    def start(self):
-        self.isStopped = False
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        
-        self.face = ThreadsafeFace(self.loop, '')
-        self.keyFace = ThreadsafeFace(self.loop, 'borges.metwi.ucla.edu')
-        self.face.stopWhen(lambda:self.isStopped)
-        self.keyFace.stopWhen(lambda:self.isStopped)
-
-        k = KeyChain()
-        self.face.setCommandSigningInfo(k, k.getDefaultCertificateName())
-        try:
-            self.loop.run_forever()
-        finally:
-            self.face.shutdown()
-        
-
-def main():
-    import threading
-    import time
-
-    client = NdnRepoClient()
-    def assembleDataName():
+    def assembleDataName(self):
         schemaStr = ('/ndn/ucla.edu/bms/{building}/data/{room}/electrical/panel/{panel_name}/{quantity}/{data_type}')
         keyNames = ['building', 'room', 'panel_name', 'quantity', 'data_type']
         valueDict = {}
@@ -179,27 +189,37 @@ def main():
         return Name(dataName)
 
     @asyncio.coroutine
-    def parseDataRequest():
+    def parseDataRequest(self):
         while True:
-            client.dataReady.clear()
-            dataName = assembleDataName()
-            client.loop.call_soon_threadsafe(client.sendDataRequestCommand,
-                    dataName)
-            yield From(client.dataReady.wait())
+            self.dataReady.clear()
+            dataName = self.assembleDataName()
+            self.loop.call_soon(self.sendDataRequestCommand, dataName)
 
-    clientThread = threading.Thread(target=client.start)
-    clientThread.daemon = True
-    clientThread.start()
-    
-    try:
-        asyncio.get_event_loop().run_until_complete(parseDataRequest())
-    except (EOFError, KeyboardInterrupt):
-        pass
-    except Exception as e:
-        print e
-    finally:
-        client.stop()
+            yield From(self.dataReady.wait())
 
+    def start(self):
+        self.isStopped = False
+        self.loop = asyncio.get_event_loop()
+        
+        self.face = ThreadsafeFace(self.loop, '')
+        self.keyFace = ThreadsafeFace(self.loop, 'borges.metwi.ucla.edu')
+        self.face.stopWhen(lambda:self.isStopped)
+        self.keyFace.stopWhen(lambda:self.isStopped)
+
+        k = KeyChain()
+        self.face.setCommandSigningInfo(k, k.getDefaultCertificateName())
+        try:
+            self.loop.run_until_complete(self.parseDataRequest())
+        finally:
+            self.face.shutdown()
+        
+
+def main():
+    import threading
+    import time
+
+    client = NdnRepoClient()
+    client.start()
 
    #while True:
    #    try:
