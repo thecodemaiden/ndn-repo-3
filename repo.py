@@ -235,9 +235,15 @@ class NdnHierarchicalRepo(object):
             self.log.exception(e, exc_info=True)
             self.face.shutdown()
 
+    def _segmentResponseData(self, dataQuery, segmentNum=0):
+        limit = 10
+        startPos = segmentNum*limit
+        results = self.db['data'].find(dataQuery).skip(segmentNum*limit).limit(limit)
+        return(startPos, results)
+
+
     def handleDataInterests(self, prefix, interest, transport, prefixId):
         # TODO: verification
-        # TODO: bulk data return?
         
         # we match the components to the name, and any '_' components
         # are discarded. Then we run a MongoDB query and append the
@@ -251,14 +257,21 @@ class NdnHierarchicalRepo(object):
         nameFields = chosenSchema.matchNameToSchema(interestName)
         self.log.info("Data requested with params:\n\t{}".format(nameFields))
         allResults = []
+        segment = 0
+        try:
+            segmentComponent = interest.getName()[-4]
+            segment = segmentComponent.toSegment()
+        except RuntimeError:
+            pass
         
-        for result in self.db['data'].find(nameFields):
+        (startPos, results) = self._segmentResponseData(nameFields, segment)
+        for result in results:
             dataId = result[u'_id']
             self.log.debug("Found object {}".format(dataId))
             allResults.append(result)
 
         #responseName.append(str(dataId))
-        responseObject = {'count':len(allResults), 'results':allResults}
+        responseObject = {'count':len(allResults), 'skip':startPos, 'results':allResults}
         responseData = Data(responseName)
         resultEncoded = BSON.encode(responseObject)
         responseData.setContent(resultEncoded)

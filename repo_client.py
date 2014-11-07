@@ -68,10 +68,7 @@ class NdnRepoClient(object):
             binDer = keyFile.read()
             self.privateKey = RSA.importKey(binDer)
 
-
-
     def _decryptAndPrintRecord(self, recordData, keyName, parentDoc):
-
         def cleanString(dirty):
             return ''.join(filter(string.printable.__contains__, str(dirty)))
 
@@ -144,9 +141,13 @@ class NdnRepoClient(object):
                 keyDataName = Name('/ndn/ucla.edu/bms/melnitz/kds').append(keyTs).append(self.keyId)
                 self._decryptAndPrintRecord(aDataVal, keyDataName, parentDoc)
             receivedVals = []
-            for i in range(len(allData)):
-                v = yield From(self.resultQueue.get())
-                receivedVals.append(v)
+            try:
+                for i in asyncio.as_completed([
+                    self.resultQueue.get() for n in range(len(allData))], timeout=5):
+                    v = yield From(i)
+                    receivedVals.append(v)
+            except asyncio.TimeoutError:
+                pass
             self.prettifyResults(receivedVals)
             print
         finally:

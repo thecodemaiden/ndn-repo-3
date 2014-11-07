@@ -103,29 +103,46 @@ class NdnRepoPing(object):
         if newName not in self.repoWatchNames:
             self.repoWatchNames.append(Name(newName))
 
+def assembleDataName():
+    schemaStr = ('/ndn/ucla.edu/bms/{building}/data/{room}/electrical/panel/{panel_name}/{quantity}/{data_type}')
+    keyNames = ['building', 'room', 'panel_name', 'quantity', 'data_type']
+    valueDict = {}
+    for k in keyNames:
+        valueDict[k] = raw_input('{}: '.format(k))
+    dataName = schemaStr.format(**valueDict)
+    return dataName
+
+
 def main():
     import threading
+    import sys
+    import time
     p = NdnRepoPing()
 
     pingThread = threading.Thread(target=p.start)
     pingThread.daemon = True
-
-    def assembleDataName():
-        schemaStr = ('/ndn/ucla.edu/bms/{building}/data/{room}/electrical/panel/{panel_name}/{quantity}/{data_type}')
-        keyNames = ['building', 'room', 'panel_name', 'quantity', 'data_type']
-        valueDict = {}
-        for k in keyNames:
-            valueDict[k] = raw_input('{}: '.format(k))
-        dataName = schemaStr.format(**valueDict)
-        return dataName
+    pingThread.start()
 
     try:
-        pingThread.start()
+        inputFile = sys.argv[1]
+        with open(inputFile, 'r') as nameList:
+            for line in nameList:
+                name = line.strip()
+                if len(name) > 0:
+                    newName = Name(name)
+                    p.loop.call_soon_threadsafe(p.addWatchName, newName)
+    except IndexError:
+        inputFile = None
+
+    try:
         while True:
-            print 'Insert repo watch name'
-            newName = assembleDataName()
-            print 'Adding {} to watchlist'.format(newName)
-            p.loop.call_soon_threadsafe(p.addWatchName, newName)
+            if inputFile is None:
+                print 'Insert repo watch name'
+                newName = assembleDataName()
+                print 'Adding {} to watchlist'.format(newName)
+                p.loop.call_soon_threadsafe(p.addWatchName, newName)
+            else:
+                time.sleep(10)
     except (KeyboardInterrupt):
         pass
     except Exception as e:
