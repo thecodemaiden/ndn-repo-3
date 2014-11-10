@@ -77,7 +77,7 @@ class NdnRepoPing(object):
 
     @asyncio.coroutine
     def sendNextInsertRequest(self):
-        sleepTime = 60*5
+        sleepTime = 60*15
         while True:
             for name in self.repoWatchNames:
                 self.sendRepoInsertCommand(name)

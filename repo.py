@@ -271,7 +271,8 @@ class NdnHierarchicalRepo(object):
             allResults.append(result)
 
         #responseName.append(str(dataId))
-        responseObject = {'count':len(allResults), 'skip':startPos, 'results':allResults}
+        totalCount = results.count(False)
+        responseObject = {'count':totalCount, 'skip':startPos, 'results':allResults}
         responseData = Data(responseName)
         resultEncoded = BSON.encode(responseObject)
         responseData.setContent(resultEncoded)

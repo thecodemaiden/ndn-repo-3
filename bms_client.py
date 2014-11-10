@@ -62,13 +62,18 @@ class NdnRepoClient(object):
         self.isStopped = True
         logging.getLogger('trollius').addHandler(h)
 
+        self.knownKeys = {}
+        self.pendingKeys = []
+
     def loadKey(self, keyFile='bms_key.pri'):
         self.keyId = '\xa2\xeb9\xbcGo$\xad\xbf\xe9?k\xb2\xb8|\xa8 E\x96\x13\x1e\xb9\x97\x91Z\xf6\xda\xd1]\xa1lD'
         with open(keyFile, 'r') as keyFile:
             binDer = keyFile.read()
             self.privateKey = RSA.importKey(binDer)
 
+    @asyncio.coroutine
     def _decryptAndPrintRecord(self, recordData, keyName, parentDoc):
+        keyUri = keyName.toUri()
         def cleanString(dirty):
             return ''.join(filter(string.printable.__contains__, str(dirty)))
 
@@ -87,17 +92,41 @@ class NdnRepoClient(object):
 
             fromJson = json.loads(decData)
             fromJson.update(parentDoc)
+            self.knownKeys[keyUri] = keyData
+            try:
+                self.pendingKeys.remove(keyUri)
+            except ValueError:
+                pass # already removed
 
             self.resultQueue.put_nowait(fromJson)
 
         def onKeyTimeout(keyInterest):
-            self.log.error('Could not get decryption key for {}'.format(data.getName()))
+            self.log.error('Could not get decryption key for {}'.format(keyInterest.getName()))
             self.resultQueue.put_nowait({})
 
         i = Interest(keyName)
         i.setMustBeFresh(False)
         i.setInterestLifetimeMilliseconds(2000)
-        self.keyFace.expressInterest(i, onKeyDataReceived, onKeyTimeout)
+
+        if keyUri in self.knownKeys:
+            self.log.debug('Using known key')
+            onKeyDataReceived(i, self.knownKeys[keyUri])
+        elif keyUri in self.pendingKeys:
+            self.log.debug('Waiting on pending key')
+            timeout = 0
+            while keyUri not in self.knownKeys:
+                yield From(asyncio.sleep(0.5))
+                timeout += 1
+                if timeout > 5:
+                    self.log.warn('Timed out on key {}'.format(keyUri))
+                    onKeyTimeout(i)
+                    break
+            else:
+                onKeyDataReceived(i, self.knownKeys[keyUri])
+        else:
+            self.log.debug('Adding {} to pending keys'.format(keyUri))
+            self.pendingKeys.append(keyUri)
+            self.keyFace.expressInterest(i, onKeyDataReceived, onKeyTimeout)
 
     def prettifyResults(self, resultsList):
         # dictionary comparison is by length (# of k:v pairs)
@@ -139,7 +168,7 @@ class NdnRepoClient(object):
                 aDataVal = str(record[u'value'])
                 keyTs = aDataVal[:8]
                 keyDataName = Name('/ndn/ucla.edu/bms/melnitz/kds').append(keyTs).append(self.keyId)
-                self._decryptAndPrintRecord(aDataVal, keyDataName, parentDoc)
+                yield From(self._decryptAndPrintRecord(aDataVal, keyDataName, parentDoc))
             receivedVals = []
             try:
                 for i in asyncio.as_completed([
@@ -159,11 +188,13 @@ class NdnRepoClient(object):
         dataContent = BSON(dataContent)
         dataDict = dataContent.decode()
 
-        dataCount = dataDict['count']
-        print '---------'
-        print 'Got {} result(s)'.format(dataCount)
-
         allData = dataDict['results']
+        totalCount = dataDict['count']
+        dataCount = len(allData)
+        skipPos = dataDict['skip']
+        print '---------'
+        print 'Got {}/{} result(s), starting at {}'.format(dataCount, totalCount, skipPos)
+
         asyncio.async(self.collectResults(allData))
 
     def onDataTimeout(self, interest):
