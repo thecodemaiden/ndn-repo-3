@@ -1,6 +1,10 @@
 TODO
 ====
 
-- Need to gather all results requiring the same symmetric key, and process them when the key is known. (Queue? semaphore?)
-   (avoid overloading the kds publisher)
+ - Page through results 
+     - add LIMIT, OFFSET syntax
+     - change segment #, set finalBlockId in repo
+
+
+ 
 

@@ -35,6 +35,7 @@ from bson import Binary, BSON
 import json
 import string
 import datetime
+import re
 
 class NdnRepoClient(object):
     def __init__(self, repoPrefix=None):
@@ -210,13 +211,42 @@ class NdnRepoClient(object):
     def stop(self):
         self.isStopped = True
 
+    def parseSqlSelect(self, statement):
+        statement = statement.strip()
+        queryDict = {}
+        try:
+            selection, parts = re.split(r'\s+WHERE\s+', statement, flags=re.I) 
+        except ValueError:
+            print 'WHERE clause is missing'
+            return  None
+        
+        selectMatch = re.match(r'^SELECT\s+(?:(\*)|(\w+,(\s*\w+)*))', selection, flags=re.I)
+        if selectMatch is None:
+            print 'Malformed SELECT'
+            return None
+
+        expressions = re.split(r'\s+AND\s+', parts, flags=re.I)
+        for ex in expressions:
+            if len(ex) == 0:
+                continue
+            try:
+                k,v = ex.split('=')
+            except ValueError:
+                print 'Malformed WHERE clause {}'.format(ex)
+            else:
+                queryDict[k.strip()] = v.strip()
+        return queryDict
+
+        # get = pairs
     def assembleDataName(self):
         schemaStr = ('/ndn/ucla.edu/bms/{building}/data/{room}/electrical/panel/{panel_name}/{quantity}/{data_type}')
         keyNames = ['building', 'room', 'panel_name', 'quantity', 'data_type']
-        valueDict = {}
+        sqlStatement = raw_input('Query> ').strip()
+        valueDict = self.parseSqlSelect(sqlStatement)
+        if valueDict is None:
+            return None
         for k in keyNames:
-            value  = raw_input('{}: '.format(k)).strip()
-            valueDict[k] = value if len(value)>0 else '_'
+            valueDict.setdefault(k, '_')
         dataName = schemaStr.format(**valueDict)
         return Name(dataName)
 
@@ -225,9 +255,9 @@ class NdnRepoClient(object):
         while True:
             self.dataReady.clear()
             dataName = self.assembleDataName()
-            self.loop.call_soon(self.sendDataRequestCommand, dataName)
-
-            yield From(self.dataReady.wait())
+            if dataName is not None:
+                self.loop.call_soon(self.sendDataRequestCommand, dataName)
+                yield From(self.dataReady.wait())
 
     def start(self):
         self.isStopped = False
@@ -242,6 +272,8 @@ class NdnRepoClient(object):
         self.face.setCommandSigningInfo(k, k.getDefaultCertificateName())
         try:
             self.loop.run_until_complete(self.parseDataRequest())
+        except (EOFError, KeyboardInterrupt):
+            pass
         finally:
             self.face.shutdown()
         
@@ -252,14 +284,6 @@ def main():
 
     client = NdnRepoClient()
     client.start()
-
-   #while True:
-   #    try:
-   #        pass
-   #    except (EOFError, KeyboardInterrupt):
-   #        break
-   #    except Exception as e:
-   #        print e
 
 if __name__ == '__main__':
     main()
