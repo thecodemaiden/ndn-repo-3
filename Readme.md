@@ -20,7 +20,7 @@ Supported Syntax
 
 This database will supports a GQL-like 'SELECT' statement:
 
-    SELECT [*, <key name list>]
+    SELECT *| <key name list>
         [FROM identifier]
         [WHERE <condition> [AND <condition>]]
         [LIMIT <count>]
@@ -28,7 +28,7 @@ This database will supports a GQL-like 'SELECT' statement:
 
     <key name list> := <key name> [, <key name> ...]
     <condition> := <key name> = <value>
-    <identifier> := [A-Za-z0-9_.] (ignored)
+    <identifier> := [A-Za-z0-9_.]
 
 The `FROM` clause is currently ignored, and only equality is currently supported
 in conditions. Furthermore, the `<key name list>` is ignored and treated 
@@ -37,7 +37,8 @@ as `*`.
 Notice also that `LIMIT` and `OFFSET` are separate clauses - in particular, 
 the `LIMIT <offset>, <count>` syntax is not supported. The `LIMIT` and `OFFSET` clauses are currently ignored.
 
-All key names are *case-sensitive*; all keywords are *case-insensitive*.
+All key names are *case-sensitive*; all keywords (SELECT, FROM, WHERE,
+ AND, LIMIT, OFFSET) are *case-insensitive*.
 
 ###Not yet implemented:
 *   Use 'FROM' clause to specify which schema is being referenced
@@ -54,11 +55,11 @@ The schema is defined as
     /ndn/ucla.edu/bms/<building>/data/<room>/electrical/panel/<panel_name>/<quantity>/<quantity_type>/
 
 This allows for queries such as:
-*   SELECT * FROM bms WHERE panel\_name=X AND quantity=voltage
-*   SELECT * WHERE room=101A AND quantity=current LIMIT 10 OFFSET 20
-*   SELEECT room, panel\_name FROM bms WHERE building=building1
+*   `SELECT * FROM bms WHERE panel_name=X AND quantity=voltage`
+*   `SELECT * WHERE room=101A AND quantity=current LIMIT 10 OFFSET 20`
+*   `SELECT room, panel_name FROM bms WHERE building=building1`
 
-Note that the FROM clause currently has no effect.
+(Remember that the `FROM` clause currently has no effect.)
 
 Notes On Storing/Querying Data
 ------------------------------
@@ -67,9 +68,15 @@ The bms\_client.py included here goes through an extra step of downloading
 keys, since the BMS data is encrypted. In your own implementation, you will
 typically do processing as soon as the data is received from the repo.
 
+The bms\_ping.py script periodically pokes the repo to insert certain data. 
+In practice, a data publisher will do this itself when there is data to be put
+in the repo.
+
+A more typical repo example will come soon.
+
 Repo Commands/Protocol
 ----------------------
 
 A full documentation of the repo-ng protocol can be found on the
 [redmine page](http://redmine.named-data.net/projects/repo-ng/wiki). Currently,
-this repo only supports the insert command.
+repo-ds9 only supports the insert command.
