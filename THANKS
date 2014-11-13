@@ -1,0 +1,2 @@
+This project includes a modified version of the simple SQL parser from the pyparsing module:
+    https://pypi.python.org/pypi/pyparsing/2.0.2

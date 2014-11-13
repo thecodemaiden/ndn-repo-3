@@ -1,10 +1,21 @@
 TODO
 ====
 
- - Page through results 
-     - add LIMIT, OFFSET syntax
-     - change segment #, set finalBlockId in repo
+-   Page through results 
+    - add LIMIT, OFFSET syntax
+    - download multiple segments in client if necessary
+    - change segment #, set finalBlockId in repo
 
+-   Enable more comparison operators
 
- 
+-   Authenticate insert commands
+    - Add insert check, save process IDs
+    - Enable multiple segment fetching ** (versions? ts? byte seg?)
+
+-   Enable deletion
+
+-   Look at selectors/excludes?   
+
+-   Allow multiple schemata, with names (used in FROM clause)
+
 
